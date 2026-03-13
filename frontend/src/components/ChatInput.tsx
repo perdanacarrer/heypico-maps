@@ -4,10 +4,10 @@ import { useAppStore } from '../store/appStore'
 import { useChat } from '../hooks/useChat'
 
 const SUGGESTIONS = [
-  'Best ramen restaurants nearby',
-  'Coffee shops open now',
-  'Tourist attractions to visit',
-  'Rooftop bars with views',
+  'Ramen in Jakarta',
+  'Coffee shops near Senayan',
+  'Tourist spots in Bali',
+  'Hospitals in South Tangerang',
 ]
 
 export function ChatInput() {
@@ -24,13 +24,9 @@ export function ChatInput() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSubmit()
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
   }
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
@@ -40,7 +36,6 @@ export function ChatInput() {
 
   return (
     <div className="space-y-3">
-      {/* Suggestion chips */}
       <div className="flex gap-2 flex-wrap">
         {SUGGESTIONS.map((s) => (
           <button
@@ -53,7 +48,6 @@ export function ChatInput() {
         ))}
       </div>
 
-      {/* Input row */}
       <div className="flex gap-3 items-end bg-surface-2 border border-white/10 focus-within:border-accent/40 rounded-2xl p-3 transition-colors">
         <textarea
           ref={textareaRef}
@@ -72,8 +66,7 @@ export function ChatInput() {
         >
           {isLoading
             ? <Loader2 className="w-4 h-4 text-white animate-spin" />
-            : <Send className="w-4 h-4 text-white" />
-          }
+            : <Send className="w-4 h-4 text-white" />}
         </button>
       </div>
     </div>

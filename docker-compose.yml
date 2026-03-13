@@ -1,7 +1,7 @@
 version: '3.9'
 
 services:
-  # ── Ollama (Local LLM) ──────────────────────────────────────────────────────
+
   ollama:
     image: ollama/ollama:latest
     container_name: heypico-ollama
@@ -11,13 +11,12 @@ services:
       - "11434:11434"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
 
-  # ── Model puller (runs once on startup) ────────────────────────────────────
   ollama-init:
     image: ollama/ollama:latest
     container_name: heypico-ollama-init
@@ -26,16 +25,13 @@ services:
         condition: service_healthy
     entrypoint: >
       sh -c "
-        ollama pull mistral &&
+        OLLAMA_HOST=http://ollama:11434 ollama pull ${OLLAMA_MODEL:-mistral} &&
         echo 'Model ready!'
       "
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
     volumes:
       - ollama_data:/root/.ollama
     restart: "no"
 
-  # ── FastAPI Backend ─────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -45,20 +41,19 @@ services:
       ollama:
         condition: service_healthy
     environment:
-      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
-      - ALLOWED_ORIGINS=http://localhost:3000,http://frontend:80,http://localhost
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost
     ports:
       - "8000:8000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" 2>/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
-  # ── React Frontend ──────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend

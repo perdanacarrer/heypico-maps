@@ -1,15 +1,17 @@
 export interface Place {
   place_id: string
+  osm_id?: number
+  osm_type?: string
   name: string
   address: string
-  rating?: number
-  user_ratings_total?: number
-  types: string[]
   lat: number
   lng: number
-  open_now?: boolean
-  price_level?: number
-  photo_reference?: string
+  type?: string
+  category?: string
+  website?: string
+  phone?: string
+  opening_hours?: string
+  cuisine?: string
 }
 
 export interface ChatMessage {

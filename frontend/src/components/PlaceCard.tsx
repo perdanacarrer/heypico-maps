@@ -1,7 +1,8 @@
+import { useState } from 'react'
 import { Place } from '../types'
-import { MapPin, Clock, ExternalLink, Globe, Phone } from 'lucide-react'
+import { MapPin, Clock, ExternalLink, Globe, Navigation, Loader2 } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
-import { osmDirectionsUrl, googleMapsUrl } from '../utils/api'
+import { osmDirectionsUrl, googleMapsDirectionsUrl, getUserLocation } from '../utils/api'
 
 interface PlaceCardProps {
   place: Place
@@ -9,11 +10,36 @@ interface PlaceCardProps {
 }
 
 export function PlaceCard({ place, index }: PlaceCardProps) {
-  const { setSelectedPlace, setMapCenter } = useAppStore()
+  const { setSelectedPlace, setMapCenter, userLocation, setUserLocation } = useAppStore()
+  const [loadingDir, setLoadingDir] = useState(false)
 
   const handleClick = () => {
     setSelectedPlace(place)
     setMapCenter({ lat: place.lat, lng: place.lng }, 16)
+  }
+
+  // Get user location then open directions
+  const handleDirections = async (e: React.MouseEvent, provider: 'osm' | 'google') => {
+    e.stopPropagation()
+    setLoadingDir(true)
+
+    let loc = userLocation
+    if (!loc) {
+      try {
+        loc = await getUserLocation()
+        setUserLocation(loc)
+      } catch {
+        // Permission denied or unavailable — open without origin
+      }
+    }
+
+    setLoadingDir(false)
+
+    const url = provider === 'osm'
+      ? osmDirectionsUrl(place.lat, place.lng, place.name, loc?.lat, loc?.lng)
+      : googleMapsDirectionsUrl(place.lat, place.lng, place.name, loc?.lat, loc?.lng)
+
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -23,7 +49,7 @@ export function PlaceCard({ place, index }: PlaceCardProps) {
       style={{ animationDelay: `${index * 60}ms` }}
     >
       <div className="flex items-start gap-3">
-        {/* Index */}
+        {/* Index badge */}
         <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-accent/20 border border-accent/30 flex items-center justify-center">
           <span className="text-accent text-xs font-mono font-semibold">{index + 1}</span>
         </div>
@@ -56,33 +82,40 @@ export function PlaceCard({ place, index }: PlaceCardProps) {
             </div>
           )}
 
-          {/* Links - visible on hover */}
-          <div className="flex items-center gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity flex-wrap">
-            <a
-              href={osmDirectionsUrl(place.lat, place.lng, place.name)}
-              target="_blank" rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="text-accent text-xs hover:underline flex items-center gap-1"
+          {/* Direction buttons — always visible */}
+          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+            <button
+              onClick={(e) => handleDirections(e, 'osm')}
+              disabled={loadingDir}
+              className="flex items-center gap-1 text-accent text-xs hover:underline disabled:opacity-50"
             >
-              <ExternalLink className="w-3 h-3" /> Directions
-            </a>
-            <a
-              href={googleMapsUrl(place.lat, place.lng, place.name)}
-              target="_blank" rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="text-accent-green text-xs hover:underline"
+              {loadingDir
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <Navigation className="w-3 h-3" />}
+              Directions (OSM)
+            </button>
+            <span className="text-white/20">·</span>
+            <button
+              onClick={(e) => handleDirections(e, 'google')}
+              disabled={loadingDir}
+              className="flex items-center gap-1 text-accent-green text-xs hover:underline disabled:opacity-50"
             >
+              <Navigation className="w-3 h-3" />
               Google Maps
-            </a>
+            </button>
             {place.website && (
-              <a
-                href={place.website}
-                target="_blank" rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="text-accent-amber text-xs hover:underline flex items-center gap-1"
-              >
-                <Globe className="w-3 h-3" /> Website
-              </a>
+              <>
+                <span className="text-white/20">·</span>
+                <a
+                  href={place.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1 text-accent-amber text-xs hover:underline"
+                >
+                  <Globe className="w-3 h-3" /> Website
+                </a>
+              </>
             )}
           </div>
         </div>

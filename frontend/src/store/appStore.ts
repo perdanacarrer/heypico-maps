@@ -1,10 +1,14 @@
 import { create } from 'zustand'
 import { AppState, Place, ChatMessage } from '../types'
 
-// Default center: South Tangerang / Jakarta
 const DEFAULT_CENTER = { lat: -6.2297, lng: 106.7634 }
 
-export const useAppStore = create<AppState>((set) => ({
+interface ExtendedState extends AppState {
+  userLocation: { lat: number; lng: number } | null
+  setUserLocation: (loc: { lat: number; lng: number } | null) => void
+}
+
+export const useAppStore = create<ExtendedState>((set) => ({
   messages: [
     {
       id: 'welcome',
@@ -19,6 +23,7 @@ export const useAppStore = create<AppState>((set) => ({
   mapZoom: 12,
   isLoading: false,
   highlightedPlaces: [],
+  userLocation: null,
 
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
   setSelectedPlace: (place) => set({ selectedPlace: place }),
@@ -26,4 +31,5 @@ export const useAppStore = create<AppState>((set) => ({
     set({ mapCenter: center, ...(zoom !== undefined && { mapZoom: zoom }) }),
   setLoading: (v) => set({ isLoading: v }),
   setHighlightedPlaces: (places) => set({ highlightedPlaces: places }),
+  setUserLocation: (loc) => set({ userLocation: loc }),
 }))

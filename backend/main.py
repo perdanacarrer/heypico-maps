@@ -138,21 +138,41 @@ def _parse_llm_json(content: str, original_message: str) -> dict:
     """Extract and parse the first JSON object from LLM output."""
     # Strip markdown fences
     content = re.sub(r"```(?:json)?|```", "", content).strip()
-    # Extract first { ... }
-    match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
-    if match:
+
+    # Find the first complete JSON object (handles phi3 that keeps talking after })
+    # Try increasingly greedy matches
+    for pattern in [
+        r'\{[^{}]*\}',           # simple single-level
+        r'\{(?:[^{}]|\{[^{}]*\})*\}',  # nested one level
+    ]:
+        for match in re.finditer(pattern, content, re.DOTALL):
+            try:
+                parsed = json.loads(match.group(0))
+                if "intent" in parsed:
+                    parsed = _normalize_llm_fields(parsed, original_message)
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+    # Try truncating at first } and parsing
+    brace_start = content.find('{')
+    brace_end = content.find('}')
+    if brace_start != -1 and brace_end != -1:
+        candidate = content[brace_start:brace_end+1]
+        # Fill in missing closing fields if phi3 cut off mid-json
         try:
-            parsed = json.loads(match.group(0))
-            # Validate required keys
-            if "intent" in parsed and "user_message" in parsed:
+            parsed = json.loads(candidate)
+            if "intent" in parsed:
+                parsed = _normalize_llm_fields(parsed, original_message)
                 return parsed
-        except json.JSONDecodeError:
+        except Exception:
             pass
 
     # Try full content as JSON
     try:
         parsed = json.loads(content)
         if "intent" in parsed:
+            parsed = _normalize_llm_fields(parsed, original_message)
             return parsed
     except Exception:
         pass
@@ -161,30 +181,91 @@ def _parse_llm_json(content: str, original_message: str) -> dict:
     return _fallback_parse(original_message)
 
 
+def _normalize_llm_fields(parsed: dict, original_message: str) -> dict:
+    """Normalize field name variations from different LLM models."""
+    # city field variations
+    if "city" not in parsed:
+        for alt in ["location", "destination", "destinations", "place", "area", "region"]:
+            val = parsed.get(alt)
+            if val:
+                parsed["city"] = val[0] if isinstance(val, list) else val
+                break
+
+    # search_query variations
+    if "search_query" not in parsed:
+        for alt in ["query", "search", "term", "keyword"]:
+            val = parsed.get(alt)
+            if val:
+                parsed["search_query"] = val
+                break
+
+    # user_message fallback
+    if "user_message" not in parsed:
+        sq = parsed.get("search_query", original_message)
+        parsed["user_message"] = f"Let me find that for you! Searching for: {sq}"
+
+    return parsed
+
+
 def _fallback_parse(message: str) -> dict:
     """
-    Simple keyword-based fallback when LLM fails entirely.
-    Detects place-search intent from common keywords.
+    Keyword-based fallback when LLM fails. Normalizes vague queries into
+    clean search terms instead of passing raw natural language to Nominatim.
     """
     msg_lower = message.lower()
-    place_keywords = [
-        "find", "search", "show", "where", "restaurant", "cafe", "coffee",
-        "hotel", "hospital", "bar", "eat", "food", "shop", "mall", "museum",
-        "park", "attraction", "gym", "pharmacy", "atm", "fuel", "near", "nearby"
+
+    # Map vague food/place patterns → concrete search queries
+    VAGUE_FOOD_PATTERNS = [
+        (r"good.*eat|eat.*nearby|food.*nearby|what.*eat|where.*eat|hungry|makan", "restaurant"),
+        (r"coffee|cafe|kopi|ngopi", "cafe"),
+        (r"drink|bar|cocktail|beer|pub", "bar"),
+        (r"hotel|stay|penginapan|menginap", "hotel"),
+        (r"hospital|doctor|clinic|sick|sakit|rs\b", "hospital"),
+        (r"pharmacy|obat|apotek|apotik", "pharmacy"),
+        (r"museum|gallery|galeri", "museum"),
+        (r"park|taman|garden", "park"),
+        (r"mall|shopping|belanja|supermarket", "shopping mall"),
+        (r"gym|fitness|olahraga", "gym"),
+        (r"atm|bank", "ATM"),
+        (r"petrol|gas|fuel|bensin|spbu|pom\s*bensin", "gas station"),
+        (r"tourist|wisata|attraction|sightseeing", "tourist attraction"),
     ]
+
+    place_keywords = [
+        "find", "search", "show", "where", "near", "nearby", "around",
+        "restaurant", "cafe", "coffee", "hotel", "hospital", "bar", "eat",
+        "food", "shop", "mall", "museum", "park", "attraction", "gym",
+        "pharmacy", "atm", "fuel", "makan", "kopi", "wisata",
+    ]
+
     is_place_search = any(kw in msg_lower for kw in place_keywords)
 
+    # Check vague patterns and normalize to clean query
+    normalized_query = None
+    for pattern, label in VAGUE_FOOD_PATTERNS:
+        if re.search(pattern, msg_lower):
+            is_place_search = True
+            normalized_query = label
+            break
+
     if is_place_search:
-        # Try to extract a city name (simple heuristic: word after "in" or "near")
-        city_match = re.search(r'\b(?:in|near|around)\s+([A-Z][a-zA-Z\s]{2,20})', message)
+        # Extract city (word after "in", "near", "around", "di", "di sekitar")
+        city_match = re.search(
+            r'\b(?:in|near|around|di|di\s+sekitar)\s+([A-Z][a-zA-Z\s]{2,20})',
+            message
+        )
         city = city_match.group(1).strip() if city_match else None
+
+        # Use normalized query if available, else fall back to raw message
+        search_query = f"{normalized_query} in {city}" if (normalized_query and city) \
+            else normalized_query or message
 
         return {
             "intent": "place_search",
-            "search_query": message,
-            "place_type": None,
+            "search_query": search_query,
+            "place_type": normalized_query,
             "city": city,
-            "user_message": f"Let me find that for you! Searching for: {message}",
+            "user_message": f"Let me find that for you! Searching for: {search_query}",
         }
 
     return {
@@ -214,6 +295,116 @@ async def geocode_city(city: str) -> dict | None:
     return None
 
 
+
+# ── Overpass API place search (better for POIs than Nominatim) ────────────────
+
+async def search_places_overpass(query: str, place_type: str | None, city_coords: dict | None) -> list[dict]:
+    """Use Overpass API to find POIs by amenity/cuisine tags near a city center."""
+    if not city_coords:
+        return []
+
+    lat, lng = city_coords["lat"], city_coords["lng"]
+    radius = 10000  # 10km radius
+
+    # Build Overpass query based on place type
+    OVERPASS_TAGS = {
+        "restaurant": '[amenity=restaurant]',
+        "cafe": '[amenity=cafe]',
+        "bar": '[amenity=bar]',
+        "fast_food": '[amenity=fast_food]',
+        "hotel": '[tourism=hotel]',
+        "museum": '[tourism=museum]',
+        "park": '[leisure=park]',
+        "hospital": '[amenity=hospital]',
+        "pharmacy": '[amenity=pharmacy]',
+        "gym": '[leisure=fitness_centre]',
+        "shopping mall": '[shop=mall]',
+        "supermarket": '[shop=supermarket]',
+        "gas station": '[amenity=fuel]',
+        "atm": '[amenity=atm]',
+        "tourist attraction": '[tourism=attraction]',
+    }
+
+    # Detect cuisine from query
+    CUISINE_MAP = {
+        "ramen": "ramen", "sushi": "sushi", "japanese": "japanese",
+        "italian": "italian", "pizza": "pizza", "burger": "burger",
+        "chinese": "chinese", "korean": "korean", "thai": "thai",
+        "indian": "indian", "indonesian": "indonesian", "padang": "padang",
+        "seafood": "seafood", "steak": "steak", "coffee": "coffee",
+    }
+
+    query_lower = query.lower()
+    cuisine_filter = next((v for k, v in CUISINE_MAP.items() if k in query_lower), None)
+    tag = OVERPASS_TAGS.get(place_type or "", '[amenity=restaurant]')
+
+    if cuisine_filter:
+        overpass_q = f'[out:json][timeout:25];(node[amenity=restaurant][cuisine~"{cuisine_filter}",i](around:{radius},{lat},{lng});way[amenity=restaurant][cuisine~"{cuisine_filter}",i](around:{radius},{lat},{lng}););out center 10;'
+    else:
+        overpass_q = f'[out:json][timeout:25];(node{tag}(around:{radius},{lat},{lng});way{tag}(around:{radius},{lat},{lng}););out center 10;'
+
+
+    OVERPASS_ENDPOINTS = [
+        "https://overpass-api.de/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    ]
+    elements = []
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                resp = await client.post(
+                    endpoint,
+                    data={"data": overpass_q},
+                    headers={"User-Agent": "HeyPico-Maps-App/1.0"},
+                )
+                data = resp.json()
+                elements = data.get("elements", [])
+                if elements:
+                    logger.info(f"Overpass found {len(elements)} results from {endpoint}")
+                    break
+        except Exception as e:
+            logger.warning(f"Overpass endpoint {endpoint} failed: {type(e).__name__}: {e}")
+            continue
+    if True:
+
+            results = []
+            for el in elements[:8]:
+                tags = el.get("tags", {})
+                name = tags.get("name") or tags.get("name:en")
+                if not name:
+                    continue
+                # Get coordinates (nodes have lat/lon directly, ways have center)
+                if el["type"] == "node":
+                    elat, elng = el.get("lat"), el.get("lon")
+                else:
+                    center = el.get("center", {})
+                    elat, elng = center.get("lat"), center.get("lon")
+                if not elat or not elng:
+                    continue
+
+                addr_parts = filter(None, [
+                    tags.get("addr:street"),
+                    tags.get("addr:suburb") or tags.get("addr:city"),
+                ])
+                results.append({
+                    "place_id": f"osm_{el['type'][0]}{el['id']}",
+                    "osm_id": el["id"],
+                    "osm_type": el["type"],
+                    "name": name,
+                    "address": ", ".join(addr_parts) or "",
+                    "lat": float(elat),
+                    "lng": float(elng),
+                    "type": tags.get("amenity") or tags.get("tourism") or tags.get("leisure"),
+                    "category": place_type,
+                    "website": tags.get("website") or tags.get("contact:website"),
+                    "phone": tags.get("phone") or tags.get("contact:phone"),
+                    "opening_hours": tags.get("opening_hours"),
+                    "cuisine": tags.get("cuisine"),
+                })
+            return results
+
+
 # ── Nominatim place search ─────────────────────────────────────────────────────
 
 async def search_places_nominatim(query: str, place_type: str | None, city: str | None) -> list[dict]:
@@ -241,7 +432,8 @@ async def search_places_nominatim(query: str, place_type: str | None, city: str 
                 params=params,
                 headers={"User-Agent": NOMINATIM_UA},
             )
-            raw = resp.json()
+            data = resp.json()
+            raw = data if isinstance(data, list) else []
     except Exception as e:
         logger.error(f"Nominatim error: {e}")
 
@@ -254,7 +446,8 @@ async def search_places_nominatim(query: str, place_type: str | None, city: str 
                     params={"q": search_str, "format": "json", "limit": 10, "addressdetails": 1},
                     headers={"User-Agent": NOMINATIM_UA},
                 )
-                raw = resp.json()
+                data = resp.json()
+                raw = data if isinstance(data, list) else []
         except Exception:
             pass
 
@@ -334,13 +527,39 @@ async def chat(request: Request, body: ChatRequest):
         query  = llm_response["search_query"]
         city   = llm_response.get("city")
         ptype  = llm_response.get("place_type")
-        result["search_query"] = query
+        # Strip natural language filler before sending to Nominatim
+        import re as _re
+        FILLER = r'^(find|search|show|get|look for|where is|where are|i want|i need|looking for|cari|dimana|ada)\s+'
+        clean_query = _re.sub(FILLER, '', query, flags=_re.IGNORECASE).strip()
+        result["search_query"] = clean_query
 
-        places = await search_places_nominatim(query, ptype, city)
+        # Geocode city first so Overpass can search by coordinates
+        city_coords = None
+        if city:
+            city_coords = await geocode_city(city)
+        logger.info(f"DEBUG city={city} city_coords={city_coords} ptype={ptype} clean_query={clean_query}")
+
+        # If no city detected, try to extract from query itself
+        if not city_coords:
+            # Try extracting city from clean_query (e.g. "ramen in Jakarta")
+            city_match = re.search(r'(?:in|near|di)\s+([A-Z][a-zA-Z ]{2,20})', clean_query)
+            if city_match:
+                city_coords = await geocode_city(city_match.group(1).strip())
+
+        # Last resort: use default map center (Jakarta area)
+        if not city_coords:
+            city_coords = {"lat": -6.2088, "lng": 106.8456}  # Jakarta center
+
+        # Try Overpass first (better for restaurants/POIs), fallback to Nominatim
+        places = await search_places_overpass(clean_query, ptype, city_coords)
+        if not places:
+            places = await search_places_nominatim(clean_query, ptype, city)
         result["places"] = places
 
         if places:
             result["map_center"] = {"lat": places[0]["lat"], "lng": places[0]["lng"]}
+        elif city_coords:
+            result["map_center"] = city_coords
         elif city:
             geo = await geocode_city(city)
             if geo:

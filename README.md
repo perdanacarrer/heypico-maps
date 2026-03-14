@@ -15,6 +15,7 @@ An AI-powered maps assistant where users find restaurants, cafes, attractions, a
 ## 🎥 Demo Video
 
 <video src="./demo.mp4" controls width="100%"></video>
+https://youtu.be/ph8fFv7YpTk
 
 ---
 

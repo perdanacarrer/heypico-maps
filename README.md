@@ -4,9 +4,9 @@ An AI-powered maps assistant where users find restaurants, cafes, attractions, a
 
 **✅ Completely FREE — No Google Maps API key, no credit card, no signup required.**
 
-- 🤖 **Local LLM**: Mistral 7B via Ollama (runs on your machine)
-- 🗺️ **Maps**: Leaflet.js + OpenStreetMap + CartoDB dark tiles (free forever)
-- 🔍 **Place search**: Nominatim API (OpenStreetMap geocoding, free)
+- 🤖 **Local LLM**: Phi-3 / Mistral via Ollama (runs on your machine)
+- 🗺️ **Maps**: Leaflet.js + OpenStreetMap + CartoDB Voyager tiles (free forever)
+- 🔍 **Place search**: Overpass API + Nominatim (OpenStreetMap, free)
 - 🐍 **Backend**: Python FastAPI
 - ⚛️ **Frontend**: React 18 + TypeScript + Vite
 
@@ -29,24 +29,24 @@ https://youtu.be/ph8fFv7YpTk
                      │
 ┌────────────────────▼────────────────────────────────────┐
 │                    VIEWMODEL                            │
-│  useAppStore (Zustand)   useChat hook   useGoogleMap   │
+│        useAppStore (Zustand)        useChat hook        │
 └────────────────────┬────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────┐
 │                     MODEL                               │
-│  FastAPI backend  →  Ollama (Mistral)  →  Nominatim    │
+│  FastAPI backend → Ollama (phi3/mistral) → Overpass API │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ### How a query flows:
 1. User types: *"Find ramen in Jakarta"*
 2. → **FastAPI** receives the message
-3. → **Mistral 7B** (via Ollama) extracts structured intent:
+3. → **Phi-3** (via Ollama) extracts structured intent:
    ```json
-   { "intent": "place_search", "search_query": "ramen restaurant Jakarta",
+   { "intent": "place_search", "search_query": "ramen",
      "place_type": "restaurant", "city": "Jakarta" }
    ```
-4. → **Nominatim API** searches OpenStreetMap for matching places
+4. → **Overpass API** searches OpenStreetMap POI database by amenity tags
 5. → Results returned as place list + map center coordinates
 6. → **Leaflet map** pins all results with numbered markers
 7. → User clicks marker → popup with directions + links
@@ -57,7 +57,7 @@ https://youtu.be/ph8fFv7YpTk
 
 ```
 heypico-maps/
-├── docker-compose.yml          # Full stack orchestration
+├── docker-compose.yml          # Backend + frontend orchestration
 ├── .env.example                # Config template (copy to .env)
 ├── README.md
 │
@@ -78,22 +78,19 @@ heypico-maps/
     ├── nginx.conf              # Reverse proxy /api → backend
     ├── Dockerfile
     └── src/
-        ├── main.tsx            # React entry point
-        ├── App.tsx             # Root layout (sidebar + map)
-        ├── index.css           # Tailwind + Leaflet dark overrides
-        ├── types/index.ts      # TypeScript interfaces (Place, ChatMessage…)
-        ├── store/
-        │   └── appStore.ts     # Zustand ViewModel — global state
-        ├── hooks/
-        │   ├── useChat.ts      # Chat send logic + state updates
-        ├── utils/
-        │   └── api.ts          # Axios client + URL helpers
+        ├── main.tsx
+        ├── App.tsx
+        ├── index.css
+        ├── types/index.ts
+        ├── store/appStore.ts
+        ├── hooks/useChat.ts
+        ├── utils/api.ts
         └── components/
-            ├── ChatPanel.tsx   # Scrollable message history
-            ├── ChatMessage.tsx # Single message bubble + place cards
-            ├── ChatInput.tsx   # Textarea + suggestion chips
-            ├── MapView.tsx     # Leaflet map + markers + popups
-            └── PlaceCard.tsx   # Individual result card
+            ├── ChatPanel.tsx
+            ├── ChatMessage.tsx
+            ├── ChatInput.tsx
+            ├── MapView.tsx
+            └── PlaceCard.tsx
 ```
 
 ---
@@ -102,53 +99,69 @@ heypico-maps/
 
 ### Prerequisites
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-- ~6 GB free disk space (for the Mistral model)
-- 8 GB RAM recommended
+- [Ollama](https://ollama.com) installed natively on your machine
+- 8 GB RAM recommended (4 GB minimum with phi3)
 
-### Step 1 — Clone / Extract the project
+### Step 1 — Install and start Ollama natively
+
+```bash
+# Install Ollama (if not already installed)
+brew install ollama
+
+# Start Ollama as a background service
+brew services start ollama
+```
+
+### Step 2 — Pull a model
+
+**Recommended for 8 GB RAM machines:**
+```bash
+ollama pull phi3
+```
+
+**For 16 GB+ RAM machines (better quality):**
+```bash
+ollama pull mistral
+```
+
+> ⏳ Model download takes 2–10 minutes depending on internet speed.
+
+### Step 3 — Clone / Extract the project
 
 ```bash
 cd heypico-maps
 ```
 
-### Step 2 — Create environment file
+### Step 4 — Create environment file
 
 ```bash
 cp .env.example .env
 ```
 
-The default `.env` works out of the box — no changes needed!
+Edit `.env` to match the model you pulled:
+```env
+OLLAMA_MODEL=phi3      # or mistral if you pulled mistral
+```
 
-### Step 3 — Start everything
+### Step 5 — Start the app
 
 ```bash
 docker-compose up --build
 ```
 
-This automatically:
-1. Starts **Ollama** LLM server
-2. Downloads **Mistral 7B** model (~4.1 GB — only on first run)
-3. Starts **FastAPI** backend on port `8000`
-4. Builds and starts **React** frontend on port `3000`
+This starts:
+1. **FastAPI** backend on port `8000` (connects to your native Ollama)
+2. **React** frontend on port `3000`
 
-> ⏳ **First run only**: Mistral model download takes 5–15 minutes depending on internet speed.
-> You'll see: `✅ Model ready!` in the logs when it's done.
-
-### Step 4 — The model download takes time based on your internet speed, do this step 4 on terminal new tab
-
-```bash
-docker logs heypico-ollama-init -f
-```
-
-You should see something like:
-```
-pulling manifest
-pulling ff82381e2bea...  23% ██░░░░░░  950 MB / 4.1 GB  2.1 MB/s  25m
-```
-
-### Step 5 — Open the app
+### Step 6 — Open the app
 
 **http://localhost:3000** 🎉
+
+### Verify everything is working:
+```bash
+curl http://localhost:8000/health
+```
+Expected: `{"status":"ok","ollama":"connected","model":"phi3","model_loaded":true,...}`
 
 ---
 
@@ -161,13 +174,14 @@ pulling ff82381e2bea...  23% ██░░░░░░  950 MB / 4.1 GB  2.1 MB/s
 | `Tourist attractions in Bali` | Maps popular Bali attractions |
 | `Hospitals in South Tangerang` | Lists hospitals near you |
 | `Rooftop bars in SCBD` | Finds bars in Jakarta's SCBD |
-| `What's good to eat nearby?` | General food recommendation chat |
+| `What's good to eat nearby?` | Searches restaurants near default location |
 
 **On the map:**
 - Click any **numbered marker** → popup with name, address, hours
-- Popup has **Directions** link (opens OpenStreetMap routing)
-- Popup has **Google Maps** link (opens Google Maps at that location)
-- **Place cards** in chat are also clickable → flies map to location
+- Popup has **OSM Directions** link (opens OpenStreetMap routing with your location)
+- Popup has **Google Maps** link (opens Google Maps directions)
+- **🟢 Locate me** button (bottom-right) → shows your current position
+- **Place cards** in chat are clickable → flies map to location
 
 ---
 
@@ -175,15 +189,16 @@ pulling ff82381e2bea...  23% ██░░░░░░  950 MB / 4.1 GB  2.1 MB/s
 
 Edit `.env`:
 ```env
-OLLAMA_MODEL=llama3       # Meta Llama 3 8B
-OLLAMA_MODEL=gemma2       # Google Gemma 2 9B
-OLLAMA_MODEL=phi3         # Microsoft Phi-3 (faster, smaller)
-OLLAMA_MODEL=mistral      # Default — recommended
+OLLAMA_MODEL=phi3         # Microsoft Phi-3 — 2.3 GB, works on 8 GB RAM ✅
+OLLAMA_MODEL=mistral      # Mistral 7B — 4.1 GB, needs 16 GB RAM
+OLLAMA_MODEL=tinyllama    # TinyLlama — 637 MB, minimal RAM, basic quality
+OLLAMA_MODEL=llama3       # Meta Llama 3 8B — needs 16 GB RAM
 ```
 
-Then restart:
+Pull the model first, then restart backend:
 ```bash
-docker-compose down && docker-compose up --build
+ollama pull phi3
+docker-compose restart backend
 ```
 
 ---
@@ -192,10 +207,11 @@ docker-compose down && docker-compose up --build
 
 | Problem | Solution |
 |---|---|
-| Map is blank / grey tiles | Check internet — tile CDN needs connection |
-| "Ollama not connected" in /health | Wait for model download; check `docker logs heypico-ollama-init` |
+| `"ollama":"disconnected"` in /health | Run `brew services start ollama` on your Mac |
+| `"model_loaded":false"` in /health | Run `ollama pull phi3` to download the model |
 | No places found | Try adding city name: *"ramen in Jakarta"* instead of just *"ramen"* |
-| Slow first response | Mistral takes ~3–8s for first inference; subsequent calls faster |
+| "Sorry, trouble connecting" error | Check `docker logs heypico-backend --tail 20` |
+| Slow first response | Model takes ~3–8s for first inference; subsequent calls faster |
 | Port 3000 already in use | Change `"3000:80"` to `"3001:80"` in docker-compose.yml |
 | Port 8000 already in use | Change `"8000:8000"` to `"8001:8000"` in docker-compose.yml |
 
@@ -206,8 +222,11 @@ curl http://localhost:8000/health
 
 # View logs
 docker logs heypico-backend
-docker logs heypico-ollama
 docker logs heypico-frontend
+
+# Check Ollama models
+ollama list
+ollama ps   # shows currently loaded model
 ```
 
 ---
@@ -216,12 +235,14 @@ docker logs heypico-frontend
 
 1. **No Google Maps / No API key**: Replaced with Leaflet.js + OpenStreetMap + Nominatim. Fully free, no credit card, works immediately.
 
-2. **LLM — Mistral 7B**: Best instruction-following and structured JSON output at the 7B parameter scale. Uses Ollama's `format: "json"` mode to guarantee valid JSON every response.
+2. **LLM — Phi-3 / Mistral via native Ollama**: Ollama runs natively on macOS for better memory management. Phi-3 (2.3 GB) works on 8 GB machines; Mistral (4.1 GB) recommended for 16 GB+.
 
-3. **NLP approach — structured prompting**: The system prompt instructs Mistral to always return `{intent, search_query, place_type, city}`. This gives us reliable intent extraction without fine-tuning.
+3. **Place search — Overpass API**: Switched from Nominatim (geocoder) to Overpass API (OSM's POI search engine) for better restaurant/amenity results. Nominatim used as fallback.
 
-4. **Map tiles — CartoDB Dark**: Beautiful dark theme matching the UI, free CDN, no key needed.
+4. **NLP approach — structured prompting**: System prompt instructs the LLM to always return `{intent, search_query, place_type, city}`. Includes fallback keyword parser for when LLM output is malformed.
 
-5. **Default location**: Map starts centered on South Tangerang / Jakarta.
+5. **Map tiles — CartoDB Voyager**: Clean, readable map style that's visible and professional. Free CDN, no key needed.
 
-6. **MVVM pattern**: Zustand store = ViewModel layer, React components = View layer, FastAPI + Ollama + Nominatim = Model layer.
+6. **Default location**: Map starts centered on South Tangerang / Jakarta.
+
+7. **MVVM pattern**: Zustand store = ViewModel layer, React components = View layer, FastAPI + Ollama + Overpass = Model layer.

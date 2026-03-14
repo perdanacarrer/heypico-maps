@@ -12,6 +12,12 @@ An AI-powered maps assistant where users find restaurants, cafes, attractions, a
 
 ---
 
+## 🎥 Demo Video
+
+
+
+---
+
 ## 🏗️ Architecture — MVVM
 
 ```
